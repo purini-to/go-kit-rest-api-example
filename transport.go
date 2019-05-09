@@ -8,6 +8,7 @@ import (
 	"github.com/go-chi/chi"
 	"github.com/go-chi/chi/middleware"
 	"github.com/go-kit/kit/log"
+	"github.com/purini-to/go-kit-rest-api-example/entities"
 	"github.com/purini-to/go-kit-rest-api-example/services"
 	"go.uber.org/zap"
 	"net/http"
@@ -59,8 +60,7 @@ func RequestLogger(logger log.Logger) func(next http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		fn := func(w http.ResponseWriter, r *http.Request) {
 			ww := middleware.NewWrapResponseWriter(w, r.ProtoMajor)
-			t1 := time.Now()
-			defer func() {
+			defer func(begin time.Time) {
 				keyvals := []interface{}{
 					"method", r.Method,
 					"url", r.URL.String(),
@@ -68,13 +68,13 @@ func RequestLogger(logger log.Logger) func(next http.Handler) http.Handler {
 					"status", ww.Status(),
 					"ip", r.RemoteAddr,
 					"byte", ww.BytesWritten(),
-					"latency", time.Since(t1),
+					"latency", time.Since(begin),
 				}
 				if reqID := middleware.GetReqID(r.Context()); len(reqID) > 0 {
-					keyvals = append(keyvals, "reqId", reqID)
+					keyvals = append([]interface{}{"reqId", reqID}, keyvals...)
 				}
 				logger.Log(keyvals...)
-			}()
+			}(time.Now())
 			next.ServeHTTP(ww, r)
 		}
 		return http.HandlerFunc(fn)
@@ -90,7 +90,7 @@ func Recoverer(fn ErrorFunc, logger log.Logger) func(next http.Handler) http.Han
 				if rvr := recover(); rvr != nil {
 					keyvals := []interface{}{"panicErr", rvr}
 					if reqID := middleware.GetReqID(r.Context()); len(reqID) > 0 {
-						keyvals = append(keyvals, "reqId", reqID)
+						keyvals = append([]interface{}{"reqId", reqID}, keyvals...)
 					}
 					logger.Log(keyvals...)
 					fn(w, r, rvr)
@@ -121,25 +121,62 @@ func MakeHTTPHandler(s services.Service, logger *zap.Logger) http.Handler {
 		Recoverer(panicHandler, &recoverLogger{wrapZapLogger: wrapZapLogger{logger: logger}}),
 	)
 
-	r.Method("GET", "/tasks", httptransport.NewServer(
-		e.GetTasksEndpoint,
-		decodeEmptyRequest,
-		encodeResponse,
-		options...,
-	))
+	r.Route("/tasks", func(r chi.Router) {
 
-	r.Method("GET", "/tasks/{id}", httptransport.NewServer(
-		e.GetTaskEndpoint,
-		decodeGetTaskRequest,
-		encodeResponse,
-		options...,
-	))
+		r.Method("GET", "/", httptransport.NewServer(
+			e.GetTasksEndpoint,
+			decodeEmptyRequest,
+			encodeResponse,
+			options...,
+		))
+
+		r.Method("POST", "/", httptransport.NewServer(
+			e.PostTaskEndpoint,
+			decodePostTaskRequest,
+			encodePostResponse,
+			options...,
+		))
+
+		r.Route("/{id}", func(r chi.Router) {
+
+			r.Method("GET", "/", httptransport.NewServer(
+				e.GetTaskEndpoint,
+				decodeGetTaskRequest,
+				encodeResponse,
+				options...,
+			))
+
+			r.Method("PUT", "/", httptransport.NewServer(
+				e.PutTaskEndpoint,
+				decodePutTaskRequest,
+				encodePutResponse,
+				options...,
+			))
+
+			r.Method("DELETE", "/", httptransport.NewServer(
+				e.DeleteTaskEndpoint,
+				decodeDeleteProfileRequest,
+				encodeDeleteResponse,
+				options...,
+			))
+
+		})
+	})
 
 	return r
 }
 
 func decodeEmptyRequest(_ context.Context, r *http.Request) (request interface{}, err error) {
 	return nil, nil
+}
+
+func decodePostTaskRequest(_ context.Context, r *http.Request) (request interface{}, err error) {
+	var req postTaskRequest
+	if e := json.NewDecoder(r.Body).Decode(&req.Task); e != nil {
+		return nil, e
+	}
+
+	return req, nil
 }
 
 func decodeGetTaskRequest(_ context.Context, r *http.Request) (request interface{}, err error) {
@@ -149,6 +186,31 @@ func decodeGetTaskRequest(_ context.Context, r *http.Request) (request interface
 	}
 
 	return getTaskRequest{ID: id}, nil
+}
+
+func decodePutTaskRequest(_ context.Context, r *http.Request) (request interface{}, err error) {
+	id := chi.URLParam(r, "id")
+	if len(id) == 0 {
+		return nil, ErrBadRouting
+	}
+
+	var task entities.Task
+	if err := json.NewDecoder(r.Body).Decode(&task); err != nil {
+		return nil, err
+	}
+	return putTaskRequest{
+		ID:   id,
+		Task: task,
+	}, nil
+}
+
+func decodeDeleteProfileRequest(_ context.Context, r *http.Request) (request interface{}, err error) {
+	id := chi.URLParam(r, "id")
+	if len(id) == 0 {
+		return nil, ErrBadRouting
+	}
+
+	return deleteTaskRequest{ID: id}, nil
 }
 
 // errorer is implemented by all concrete response types that may contain
@@ -164,14 +226,26 @@ type errorer interface {
 // reason to provide anything more specific. It's certainly possible to
 // specialize on a per-response (per-method) basis.
 func encodeResponse(ctx context.Context, w http.ResponseWriter, response interface{}) error {
-	if e, ok := response.(errorer); ok && e.error() != nil {
-		// Not a Go kit transport error, but a business-logic error.
-		// Provide those as HTTP errors.
-		encodeError(ctx, e.error(), w)
-		return nil
-	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	return json.NewEncoder(w).Encode(response)
+}
+
+func encodePostResponse(_ context.Context, w http.ResponseWriter, _ interface{}) error {
+	w.WriteHeader(http.StatusCreated)
+	_, err := w.Write([]byte(""))
+	return err
+}
+
+func encodePutResponse(_ context.Context, w http.ResponseWriter, _ interface{}) error {
+	w.WriteHeader(http.StatusNoContent)
+	_, err := w.Write([]byte(""))
+	return err
+}
+
+func encodeDeleteResponse(_ context.Context, w http.ResponseWriter, _ interface{}) error {
+	w.WriteHeader(http.StatusNoContent)
+	_, err := w.Write([]byte(""))
+	return err
 }
 
 func encodeError(_ context.Context, err error, w http.ResponseWriter) {
@@ -197,6 +271,10 @@ func codeFrom(err error) int {
 	switch err {
 	case services.ErrNotFound:
 		return http.StatusNotFound
+	case services.ErrInconsistentIDs:
+		return http.StatusBadRequest
+	case services.ErrAlreadyExists:
+		return http.StatusConflict
 	default:
 		return http.StatusInternalServerError
 	}

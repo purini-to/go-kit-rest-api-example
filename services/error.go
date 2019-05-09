@@ -3,5 +3,7 @@ package services
 import "errors"
 
 var (
-	ErrNotFound = errors.New("not found")
+	ErrInconsistentIDs = errors.New("inconsistent IDs")
+	ErrNotFound        = errors.New("not found")
+	ErrAlreadyExists   = errors.New("already exists")
 )

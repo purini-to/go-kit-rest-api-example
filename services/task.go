@@ -52,3 +52,33 @@ func (s *task) GetTask(_ context.Context, id string) (entities.Task, error) {
 	}
 	return p, nil
 }
+
+func (s *task) PostTask(ctx context.Context, t entities.Task) (entities.Task, error) {
+	s.mtx.Lock()
+	defer s.mtx.Unlock()
+	if _, ok := s.m[t.ID]; ok {
+		return entities.Task{}, ErrAlreadyExists // POST = create, don't overwrite
+	}
+	s.m[t.ID] = t
+	return t, nil
+}
+
+func (s *task) PutTask(ctx context.Context, id string, t entities.Task) (entities.Task, error) {
+	if id != t.ID {
+		return entities.Task{}, ErrInconsistentIDs
+	}
+	s.mtx.Lock()
+	defer s.mtx.Unlock()
+	s.m[id] = t // PUT = create or update
+	return t, nil
+}
+
+func (s *task) DeleteTask(ctx context.Context, id string) error {
+	s.mtx.Lock()
+	defer s.mtx.Unlock()
+	if _, ok := s.m[id]; !ok {
+		return ErrNotFound
+	}
+	delete(s.m, id)
+	return nil
+}
