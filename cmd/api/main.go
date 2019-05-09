@@ -3,6 +3,8 @@ package main
 import (
 	"fmt"
 	"github.com/purini-to/go-kit-rest-api-example"
+	"github.com/purini-to/go-kit-rest-api-example/middlewares"
+	"github.com/purini-to/go-kit-rest-api-example/services"
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 	"net/http"
@@ -34,14 +36,15 @@ func main() {
 }
 
 func run(_ *cobra.Command, _ []string) {
-	logger, err := zap.NewProduction()
+	logger, err := zap.NewDevelopment()
 	if err != nil {
 		panic(err)
 	}
 
-	var s go_kit_rest_api_example.Service
+	var s services.Service
 	{
-		s = go_kit_rest_api_example.NewInmemService()
+		s = services.NewService()
+		s = middlewares.Logging(logger)(s)
 	}
 
 	var h http.Handler

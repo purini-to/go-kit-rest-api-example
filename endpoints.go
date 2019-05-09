@@ -3,6 +3,7 @@ package go_kit_rest_api_example
 import (
 	"context"
 	"github.com/go-kit/kit/endpoint"
+	"github.com/purini-to/go-kit-rest-api-example/services"
 )
 
 // Endpoints collects all of the endpoints that compose a profile service. It's
@@ -27,7 +28,7 @@ type Endpoints struct {
 // MakeServerEndpoints returns an Endpoints struct where each endpoint invokes
 // the corresponding method on the provided service. Useful in a profilesvc
 // server.
-func MakeServerEndpoints(s Service) Endpoints {
+func MakeServerEndpoints(s services.Service) Endpoints {
 	return Endpoints{
 		GetTasksEndpoint: MakeGetTasksEndpointEndpoint(s),
 		GetTaskEndpoint:  MakeGetTaskEndpointEndpoint(s),
@@ -36,7 +37,7 @@ func MakeServerEndpoints(s Service) Endpoints {
 
 // MakeGetTasksEndpointEndpoint returns an endpoint via the passed service.
 // Primarily useful in a server.
-func MakeGetTasksEndpointEndpoint(s Service) endpoint.Endpoint {
+func MakeGetTasksEndpointEndpoint(s services.Service) endpoint.Endpoint {
 	return func(ctx context.Context, request interface{}) (response interface{}, err error) {
 		t, e := s.GetTasks(ctx)
 		return t, e
@@ -45,7 +46,7 @@ func MakeGetTasksEndpointEndpoint(s Service) endpoint.Endpoint {
 
 // MakeGetTaskEndpointEndpoint returns an endpoint via the passed service.
 // Primarily useful in a server.
-func MakeGetTaskEndpointEndpoint(s Service) endpoint.Endpoint {
+func MakeGetTaskEndpointEndpoint(s services.Service) endpoint.Endpoint {
 	return func(ctx context.Context, request interface{}) (response interface{}, err error) {
 		req := request.(getTaskRequest)
 		t, e := s.GetTask(ctx, req.ID)

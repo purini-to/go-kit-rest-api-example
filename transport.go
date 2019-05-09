@@ -7,9 +7,11 @@ import (
 	"fmt"
 	"github.com/go-chi/chi"
 	"github.com/go-chi/chi/middleware"
-	"github.com/purini-to/go-kit-rest-api-example/middlewares"
+	"github.com/go-kit/kit/log"
+	"github.com/purini-to/go-kit-rest-api-example/services"
 	"go.uber.org/zap"
 	"net/http"
+	"time"
 
 	httptransport "github.com/go-kit/kit/transport/http"
 )
@@ -32,23 +34,13 @@ func (w *wrapZapLogger) With(keyvals ...interface{}) *zap.Logger {
 	return logger
 }
 
-type errorLogger struct {
-	wrapZapLogger
-}
-
-func (e *errorLogger) Log(keyvals ...interface{}) error {
-	logger := e.With(keyvals...)
-	logger.Error("http transport server error")
-	return nil
-}
-
 type requestLogger struct {
 	wrapZapLogger
 }
 
 func (e *requestLogger) Log(keyvals ...interface{}) error {
 	logger := e.With(keyvals...)
-	logger.Info("request log")
+	logger.Info("request")
 	return nil
 }
 
@@ -62,27 +54,72 @@ func (e *recoverLogger) Log(keyvals ...interface{}) error {
 	return nil
 }
 
+// RequestLogger prodive request log middleware.
+func RequestLogger(logger log.Logger) func(next http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		fn := func(w http.ResponseWriter, r *http.Request) {
+			ww := middleware.NewWrapResponseWriter(w, r.ProtoMajor)
+			t1 := time.Now()
+			defer func() {
+				keyvals := []interface{}{
+					"method", r.Method,
+					"url", r.URL.String(),
+					"proto", r.Proto,
+					"status", ww.Status(),
+					"ip", r.RemoteAddr,
+					"byte", ww.BytesWritten(),
+					"latency", time.Since(t1),
+				}
+				if reqID := middleware.GetReqID(r.Context()); len(reqID) > 0 {
+					keyvals = append(keyvals, "reqId", reqID)
+				}
+				logger.Log(keyvals...)
+			}()
+			next.ServeHTTP(ww, r)
+		}
+		return http.HandlerFunc(fn)
+	}
+}
+
+type ErrorFunc func(w http.ResponseWriter, r *http.Request, panicErr interface{})
+
+func Recoverer(fn ErrorFunc, logger log.Logger) func(next http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		fn := func(w http.ResponseWriter, r *http.Request) {
+			defer func() {
+				if rvr := recover(); rvr != nil {
+					keyvals := []interface{}{"panicErr", rvr}
+					if reqID := middleware.GetReqID(r.Context()); len(reqID) > 0 {
+						keyvals = append(keyvals, "reqId", reqID)
+					}
+					logger.Log(keyvals...)
+					fn(w, r, rvr)
+				}
+			}()
+
+			next.ServeHTTP(w, r)
+		}
+
+		return http.HandlerFunc(fn)
+	}
+}
+
 // MakeHTTPHandler mounts all of the service endpoints into an http.Handler.
 // Useful in a profilesvc server.
-func MakeHTTPHandler(s Service, logger *zap.Logger) http.Handler {
+func MakeHTTPHandler(s services.Service, logger *zap.Logger) http.Handler {
 	r := chi.NewRouter()
 	e := MakeServerEndpoints(s)
 	options := []httptransport.ServerOption{
-		httptransport.ServerErrorLogger(&errorLogger{wrapZapLogger: wrapZapLogger{logger: logger}}),
 		httptransport.ServerErrorEncoder(encodeError),
 	}
 
 	// A good base middleware stack
-	r.Use(middleware.RequestID)
-	r.Use(middleware.RealIP)
-	r.Use(middlewares.RequestLogger(&requestLogger{wrapZapLogger: wrapZapLogger{logger: logger}}))
-	r.Use(middlewares.Recoverer(func(w http.ResponseWriter, r *http.Request, panicErr interface{}) {
-		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		w.WriteHeader(http.StatusInternalServerError)
-		json.NewEncoder(w).Encode(map[string]interface{}{
-			"error": http.StatusText(http.StatusInternalServerError),
-		})
-	}, &recoverLogger{wrapZapLogger: wrapZapLogger{logger: logger}}))
+	r.Use(
+		middleware.RequestID,
+		middleware.RealIP,
+		RequestLogger(&requestLogger{wrapZapLogger: wrapZapLogger{logger: logger}}),
+		Recoverer(panicHandler, &recoverLogger{wrapZapLogger: wrapZapLogger{logger: logger}}),
+	)
 
 	r.Method("GET", "/tasks", httptransport.NewServer(
 		e.GetTasksEndpoint,
@@ -148,9 +185,17 @@ func encodeError(_ context.Context, err error, w http.ResponseWriter) {
 	})
 }
 
+func panicHandler(w http.ResponseWriter, r *http.Request, _ interface{}) {
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(http.StatusInternalServerError)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"error": http.StatusText(http.StatusInternalServerError),
+	})
+}
+
 func codeFrom(err error) int {
 	switch err {
-	case ErrNotFound:
+	case services.ErrNotFound:
 		return http.StatusNotFound
 	default:
 		return http.StatusInternalServerError
