@@ -1,13 +1,13 @@
-package go_kit_rest_api_example
+package transports
 
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"github.com/go-chi/chi"
 	"github.com/go-chi/chi/middleware"
 	"github.com/go-kit/kit/log"
+	"github.com/purini-to/go-kit-rest-api-example/endpoints"
 	"github.com/purini-to/go-kit-rest-api-example/entities"
 	"github.com/purini-to/go-kit-rest-api-example/services"
 	"go.uber.org/zap"
@@ -15,12 +15,6 @@ import (
 	"time"
 
 	httptransport "github.com/go-kit/kit/transport/http"
-)
-
-var (
-	// ErrBadRouting is returned when an expected path variable is missing.
-	// It always indicates programmer error.
-	ErrBadRouting = errors.New("inconsistent mapping between route and handler (programmer error)")
 )
 
 type wrapZapLogger struct {
@@ -55,8 +49,7 @@ func (e *recoverLogger) Log(keyvals ...interface{}) error {
 	return nil
 }
 
-// RequestLogger prodive request log middleware.
-func RequestLogger(logger log.Logger) func(next http.Handler) http.Handler {
+func requestLoggerMiddle(logger log.Logger) func(next http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		fn := func(w http.ResponseWriter, r *http.Request) {
 			ww := middleware.NewWrapResponseWriter(w, r.ProtoMajor)
@@ -81,9 +74,9 @@ func RequestLogger(logger log.Logger) func(next http.Handler) http.Handler {
 	}
 }
 
-type ErrorFunc func(w http.ResponseWriter, r *http.Request, panicErr interface{})
+type errorFunc func(w http.ResponseWriter, r *http.Request, panicErr interface{})
 
-func Recoverer(fn ErrorFunc, logger log.Logger) func(next http.Handler) http.Handler {
+func recovererMiddle(fn errorFunc, logger log.Logger) func(next http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		fn := func(w http.ResponseWriter, r *http.Request) {
 			defer func() {
@@ -104,11 +97,8 @@ func Recoverer(fn ErrorFunc, logger log.Logger) func(next http.Handler) http.Han
 	}
 }
 
-// MakeHTTPHandler mounts all of the service endpoints into an http.Handler.
-// Useful in a profilesvc server.
 func MakeHTTPHandler(s services.Service, logger *zap.Logger) http.Handler {
 	r := chi.NewRouter()
-	e := MakeServerEndpoints(s)
 	options := []httptransport.ServerOption{
 		httptransport.ServerErrorEncoder(encodeError),
 	}
@@ -117,21 +107,21 @@ func MakeHTTPHandler(s services.Service, logger *zap.Logger) http.Handler {
 	r.Use(
 		middleware.RequestID,
 		middleware.RealIP,
-		RequestLogger(&requestLogger{wrapZapLogger: wrapZapLogger{logger: logger}}),
-		Recoverer(panicHandler, &recoverLogger{wrapZapLogger: wrapZapLogger{logger: logger}}),
+		requestLoggerMiddle(&requestLogger{wrapZapLogger: wrapZapLogger{logger: logger}}),
+		recovererMiddle(panicHandler, &recoverLogger{wrapZapLogger: wrapZapLogger{logger: logger}}),
 	)
 
 	r.Route("/tasks", func(r chi.Router) {
 
 		r.Method("GET", "/", httptransport.NewServer(
-			e.GetTasksEndpoint,
+			endpoints.GetTasksEndpoint(s),
 			decodeEmptyRequest,
-			encodeResponse,
+			encodeGetTasksResponse,
 			options...,
 		))
 
 		r.Method("POST", "/", httptransport.NewServer(
-			e.PostTaskEndpoint,
+			endpoints.PostTaskEndpoint(s),
 			decodePostTaskRequest,
 			encodePostResponse,
 			options...,
@@ -140,21 +130,21 @@ func MakeHTTPHandler(s services.Service, logger *zap.Logger) http.Handler {
 		r.Route("/{id}", func(r chi.Router) {
 
 			r.Method("GET", "/", httptransport.NewServer(
-				e.GetTaskEndpoint,
+				endpoints.GetTaskEndpoint(s),
 				decodeGetTaskRequest,
-				encodeResponse,
+				encodeGetTaskResponse,
 				options...,
 			))
 
 			r.Method("PUT", "/", httptransport.NewServer(
-				e.PutTaskEndpoint,
+				endpoints.PutTaskEndpoint(s),
 				decodePutTaskRequest,
 				encodePutResponse,
 				options...,
 			))
 
 			r.Method("DELETE", "/", httptransport.NewServer(
-				e.DeleteTaskEndpoint,
+				endpoints.DeleteTaskEndpoint(s),
 				decodeDeleteProfileRequest,
 				encodeDeleteResponse,
 				options...,
@@ -171,7 +161,7 @@ func decodeEmptyRequest(_ context.Context, r *http.Request) (request interface{}
 }
 
 func decodePostTaskRequest(_ context.Context, r *http.Request) (request interface{}, err error) {
-	var req postTaskRequest
+	var req endpoints.PostTaskInput
 	if e := json.NewDecoder(r.Body).Decode(&req.Task); e != nil {
 		return nil, e
 	}
@@ -181,24 +171,18 @@ func decodePostTaskRequest(_ context.Context, r *http.Request) (request interfac
 
 func decodeGetTaskRequest(_ context.Context, r *http.Request) (request interface{}, err error) {
 	id := chi.URLParam(r, "id")
-	if len(id) == 0 {
-		return nil, ErrBadRouting
-	}
 
-	return getTaskRequest{ID: id}, nil
+	return endpoints.GetTaskInput{ID: id}, nil
 }
 
 func decodePutTaskRequest(_ context.Context, r *http.Request) (request interface{}, err error) {
 	id := chi.URLParam(r, "id")
-	if len(id) == 0 {
-		return nil, ErrBadRouting
-	}
 
 	var task entities.Task
 	if err := json.NewDecoder(r.Body).Decode(&task); err != nil {
 		return nil, err
 	}
-	return putTaskRequest{
+	return endpoints.PutTaskInput{
 		ID:   id,
 		Task: task,
 	}, nil
@@ -206,46 +190,43 @@ func decodePutTaskRequest(_ context.Context, r *http.Request) (request interface
 
 func decodeDeleteProfileRequest(_ context.Context, r *http.Request) (request interface{}, err error) {
 	id := chi.URLParam(r, "id")
-	if len(id) == 0 {
-		return nil, ErrBadRouting
-	}
 
-	return deleteTaskRequest{ID: id}, nil
+	return endpoints.DeleteTaskInput{ID: id}, nil
 }
 
-// errorer is implemented by all concrete response types that may contain
-// errors. It allows us to change the HTTP response code without needing to
-// trigger an endpoint (transport-level) error. For more information, read the
-// big comment in endpoints.go.
-type errorer interface {
-	error() error
-}
-
-// encodeResponse is the common method to encode all response types to the
-// client. I chose to do it this way because, since we're using JSON, there's no
-// reason to provide anything more specific. It's certainly possible to
-// specialize on a per-response (per-method) basis.
-func encodeResponse(ctx context.Context, w http.ResponseWriter, response interface{}) error {
+func encodeResponse(_ context.Context, w http.ResponseWriter, response interface{}) error {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	return json.NewEncoder(w).Encode(response)
 }
 
-func encodePostResponse(_ context.Context, w http.ResponseWriter, _ interface{}) error {
+func encodeEmptyResponse(_ context.Context, w http.ResponseWriter, _ interface{}) error {
+	_, err := w.Write([]byte(""))
+	return err
+}
+
+func encodeGetTasksResponse(ctx context.Context, w http.ResponseWriter, response interface{}) error {
+	r := response.(endpoints.GetTasksOutput)
+	return encodeResponse(ctx, w, r.Tasks)
+}
+
+func encodeGetTaskResponse(ctx context.Context, w http.ResponseWriter, response interface{}) error {
+	r := response.(endpoints.GetTaskOutput)
+	return encodeResponse(ctx, w, r.Task)
+}
+
+func encodePostResponse(ctx context.Context, w http.ResponseWriter, response interface{}) error {
 	w.WriteHeader(http.StatusCreated)
-	_, err := w.Write([]byte(""))
-	return err
+	return encodeEmptyResponse(ctx, w, response)
 }
 
-func encodePutResponse(_ context.Context, w http.ResponseWriter, _ interface{}) error {
+func encodePutResponse(ctx context.Context, w http.ResponseWriter, response interface{}) error {
 	w.WriteHeader(http.StatusNoContent)
-	_, err := w.Write([]byte(""))
-	return err
+	return encodeEmptyResponse(ctx, w, response)
 }
 
-func encodeDeleteResponse(_ context.Context, w http.ResponseWriter, _ interface{}) error {
+func encodeDeleteResponse(ctx context.Context, w http.ResponseWriter, response interface{}) error {
 	w.WriteHeader(http.StatusNoContent)
-	_, err := w.Write([]byte(""))
-	return err
+	return encodeEmptyResponse(ctx, w, response)
 }
 
 func encodeError(_ context.Context, err error, w http.ResponseWriter) {

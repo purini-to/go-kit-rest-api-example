@@ -1,11 +1,11 @@
 package main
 
 import (
+	"flag"
 	"fmt"
-	"github.com/purini-to/go-kit-rest-api-example"
 	"github.com/purini-to/go-kit-rest-api-example/middlewares"
 	"github.com/purini-to/go-kit-rest-api-example/services"
-	"github.com/spf13/cobra"
+	"github.com/purini-to/go-kit-rest-api-example/transports"
 	"go.uber.org/zap"
 	"net/http"
 	"os"
@@ -13,30 +13,33 @@ import (
 	"syscall"
 )
 
-type Options struct {
-	port int
-}
-
-var opt = &Options{}
-
 func main() {
-	var cmd = &cobra.Command{
-		Use:   "api",
-		Short: "REST APIサーバーを起動します",
-		Long:  `REST APIサーバーを起動します`,
-		Run:   run,
-	}
+	var (
+		port int
+		debug bool
+	)
+	flag.IntVar(&port, "port", 8080,
+		`It is a port to listen for HTTP`,
+	)
+	flag.BoolVar(&debug, "debug", false,
+		`Flag to run in the debug environment`,
+	)
+	flag.Parse()
 
-	cmd.Flags().IntVarP(&opt.port, "port", "p", 8080, "HTTPリッスンポート")
-
-	if err := cmd.Execute(); err != nil {
-		fmt.Println(err)
-		os.Exit(1)
-	}
+	run(port, debug)
 }
 
-func run(_ *cobra.Command, _ []string) {
-	logger, err := zap.NewDevelopment()
+func run(port int, debug bool) {
+	var (
+		logger *zap.Logger
+		err error
+	)
+
+	if debug {
+		logger, err = zap.NewDevelopment()
+	} else {
+		logger, err = zap.NewProduction()
+	}
 	if err != nil {
 		panic(err)
 	}
@@ -49,7 +52,7 @@ func run(_ *cobra.Command, _ []string) {
 
 	var h http.Handler
 	{
-		h = go_kit_rest_api_example.MakeHTTPHandler(s, logger)
+		h = transports.MakeHTTPHandler(s, logger)
 	}
 
 	errs := make(chan error)
@@ -60,7 +63,7 @@ func run(_ *cobra.Command, _ []string) {
 	}()
 
 	go func() {
-		port := fmt.Sprintf(":%d", opt.port)
+		port := fmt.Sprintf(":%d", port)
 		logger.Info("listen and serve", zap.String("transport", "HTTP"), zap.String("port", port))
 		errs <- http.ListenAndServe(port, h)
 	}()
