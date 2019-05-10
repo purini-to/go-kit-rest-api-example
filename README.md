@@ -10,8 +10,7 @@ go-kit sample using chi and zap.
 git clone https://github.com/purini-to/go-kit-rest-api-example
 cd go-kit-rest-api-example
 go run cmd/api/main.go
-
-# oer debug run
+# or debug run
 go run cmd/api/main.go -debug
 ```
 
