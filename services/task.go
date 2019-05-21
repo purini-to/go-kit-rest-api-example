@@ -24,6 +24,11 @@ func newTask() *task {
 				Title: "Custom Fields on mobile",
 				State: "incomplete",
 			},
+			"12392198332uhfawo3298329": {
+				ID:    "12392198332uhfawo3298329",
+				Title: "Custom Fields in TSV exports",
+				State: "incomplete",
+			},
 		},
 	}
 }
