@@ -15,3 +15,18 @@ go run cmd/api/main.go
 ```
 
 #### Go to [http://localhost:8080/tasks](http://localhost:8080/tasks)
+
+
+## Run on kubernetes
+
+build docker image
+```bash
+# minikube
+# eval $(minikube docker-env)
+docker build . -t go-kit-rest-api-example:v1.0.0
+```
+
+deploy kubernates
+```bash
+kubectl apply -k ./k8s/
+```

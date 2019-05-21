@@ -153,6 +153,13 @@ func MakeHTTPHandler(s services.Service, logger *zap.Logger) http.Handler {
 		})
 	})
 
+	r.Method("GET", "/health", httptransport.NewServer(
+		endpoints.HealthCheckEndpoint(s),
+		decodeEmptyRequest,
+		encodeResponse,
+		options...,
+	))
+
 	return r
 }
 

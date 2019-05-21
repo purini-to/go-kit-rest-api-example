@@ -46,6 +46,13 @@ func DeleteTaskEndpoint(s services.Service) endpoint.Endpoint {
 	}
 }
 
+func HealthCheckEndpoint(s services.Service) endpoint.Endpoint {
+	return func(ctx context.Context, request interface{}) (response interface{}, err error) {
+		m := s.HealthCheck(ctx)
+		return HealthCheckOutput{State: m}, nil
+	}
+}
+
 type GetTasksOutput struct {
 	Tasks []entities.Task
 }
@@ -78,4 +85,8 @@ type PutTaskOutput struct {
 type DeleteTaskInput struct {
 	ID   string
 	Task entities.Task
+}
+
+type HealthCheckOutput struct {
+	State string `json:"state"`
 }

@@ -13,13 +13,19 @@ WORKDIR $APP_DIR
 RUN groupadd -r app && useradd --no-log-init -r -g app app
 
 RUN \
-    --mount=type=cache,target=/var/cache/apt/archives \
+#    --mount=type=cache,target=/var/cache/apt/archives \
     apt-get update -y && apt-get install -y upx
 
+COPY go.mod go.sum ./
+
+RUN go mod download
+
+COPY . .
+
 RUN \
-    --mount=type=cache,target=/root/.cache/go-build \
-    --mount=type=cache,target=/go \
-    --mount=type=bind,target=. \
+#    --mount=type=cache,target=/root/.cache/go-build \
+#    --mount=type=cache,target=/go \
+#    --mount=type=bind,target=. \
     CGO_ENABLED=0 go build -ldflags '-d -w -s' -o /bin/api cmd/api/main.go &&\
     upx /bin/api
 

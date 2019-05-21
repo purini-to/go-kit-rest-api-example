@@ -1,0 +1,6 @@
+namePrefix: go-kit-example-
+
+resources:
+  - deployment.yaml
+  - service.yaml
+  - hpa.yaml

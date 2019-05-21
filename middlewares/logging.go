@@ -30,6 +30,14 @@ type logging struct {
 	logger *zap.Logger
 }
 
+func (l logging) HealthCheck(ctx context.Context) string {
+	ctx = withLogger(ctx, l.logger)
+	defer func(begin time.Time) {
+		write(ctx, "HealthCheck", nil, begin)
+	}(time.Now())
+	return l.next.HealthCheck(ctx)
+}
+
 func (l logging) PostTask(ctx context.Context, t entities.Task) (task entities.Task, err error) {
 	ctx = withLogger(ctx, l.logger)
 	defer func(begin time.Time) {
